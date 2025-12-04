@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import messagebox
 
@@ -10,21 +11,20 @@ class JuegoGUI:
         self.root = root
         self.root.title("Juego de Artes Marciales")
 
-        # === CONFIGURACIÓN DE GRID PARA AUTOAJUSTE ===
+        # CONFIGURACIÓN DE GRID PARA AUTOAJUSTE
         self.root.columnconfigure(0, weight=1)
-        self.root.columnconfigure(1, weight=2)  # centro crece más
+        self.root.columnconfigure(1, weight=2)
         self.root.columnconfigure(2, weight=1)
-
         self.root.rowconfigure(0, weight=1)
 
-        # Crear jugadores
+        # === Crear jugadores ===
         self.j1 = Jugador("Player 1")
         self.j2 = Jugador("Player 2")
 
-        # Artes disponibles
+        # === Artes disponibles ===
         self.artes_disponibles = FabricaArtesMarciales.crear_artes_disponibles()
 
-        # Selección inicial de artes
+        # Selección de artes inicial
         self.seleccionar_artes_para_jugador(self.j1, "Seleccionar artes para Player 1")
         self.seleccionar_artes_para_jugador(self.j2, "Seleccionar artes para Player 2")
 
@@ -34,20 +34,26 @@ class JuegoGUI:
         self.j1_combo_pendiente = None
         self.j2_combo_pendiente = None
 
-        self.estado_j1 = "esperando_seleccion"
+        self.estado_j1 = "esperando_seleccion"  # otros: "arte_fijado", "combo_generado"
         self.estado_j2 = "esperando_seleccion"
+        self.turno_actual = 1  # 1 = J1, 2 = J2
 
-        self.turno_actual = 1
-
-        # Contadores
         self.j1_contador_combos = 0
         self.j2_contador_combos = 0
 
-        # UI
+        # === Bitácora (estructura interna) ===
+        self.historial_bitacora = []     # lista de strings
+        self.bitacora_window = None      # ventana Toplevel
+        self.txt_bitacora = None         # Text dentro de la ventana
+
+        # === Crear UI ===
         self.crear_ui()
+        self.cargar_imagenes_artes()
         self.refrescar_artes_ui()
         self.actualizar_vidas()
         self.actualizar_controles()
+        self.actualizar_imagen_p1()
+        self.actualizar_imagen_p2()
 
     # ============================================================
     # SELECCIÓN DE ARTES
@@ -72,42 +78,42 @@ class JuegoGUI:
             win.destroy()
 
         tk.Button(win, text="Confirmar", command=confirmar).pack(pady=5)
-
         win.grab_set()
         self.root.wait_window(win)
 
     # ============================================================
-    # LOGICA COMBATE
+    # LÓGICA DE COMBATE
     # ============================================================
     def aplicar_combo(self, atacante, defensor, combo):
-        damage_total = 0
+        dmg_total = 0
         cura_total = 0
         nombres = []
         especial = None
 
         for golpe in combo:
             nombres.append(golpe.nombre)
+
             vida_def_antes = defensor.vida
             vida_atk_antes = atacante.vida
 
             golpe.aplicar(atacante, defensor)
 
-            damage = max(0, vida_def_antes - defensor.vida)
-            cura = max(0, atacante.vida - vida_atk_antes)
+            dmg = max(0, vida_def_antes - defensor.vida)
+            cur = max(0, atacante.vida - vida_atk_antes)
 
-            damage_total += damage
-            cura_total += cura
+            dmg_total += dmg
+            cura_total += cur
 
             if golpe.cura_usuario > 0 or golpe.damage_extra_enemigo > 0:
                 especial = golpe
 
-        return damage_total, cura_total, nombres, especial
+        return dmg_total, cura_total, nombres, especial
 
     # ============================================================
     # UI
     # ============================================================
     def crear_ui(self):
-        # === FRAMES PRINCIPALES ===
+        # Marcos principales
         self.frame_p1 = tk.Frame(self.root, padx=10, pady=10, bd=2, relief="groove")
         self.frame_centro = tk.Frame(self.root, padx=10, pady=10)
         self.frame_p2 = tk.Frame(self.root, padx=10, pady=10, bd=2, relief="groove")
@@ -116,16 +122,25 @@ class JuegoGUI:
         self.frame_centro.grid(row=0, column=1, sticky="nsew")
         self.frame_p2.grid(row=0, column=2, sticky="nsew")
 
-        # ---------------- PLAYER 1 ----------------
-        tk.Label(self.frame_p1, text="Player 1", font=("Arial", 14, "bold")).grid(row=0, column=0, columnspan=3)
+        # =====================================================
+        # PLAYER 1
+        # =====================================================
+        tk.Label(self.frame_p1, text="Player 1", font=("Arial", 14, "bold")).grid(
+            row=0, column=0, columnspan=3
+        )
 
         self.j1_btn_artes = []
         self.j1_lbl_golpes = []
 
         for i in range(3):
-            btn = tk.Button(self.frame_p1, text="", width=12,
-                            command=lambda idx=i: self.seleccionar_arte_p1(idx),
-                            bg="#b33", fg="white")
+            btn = tk.Button(
+                self.frame_p1,
+                text="",
+                width=12,
+                command=lambda idx=i: self.seleccionar_arte_p1(idx),
+                bg="#b33",
+                fg="white",
+            )
             btn.grid(row=1, column=i, padx=5, pady=5)
             self.j1_btn_artes.append(btn)
 
@@ -134,31 +149,57 @@ class JuegoGUI:
             lbl.grid(row=2, column=i)
             self.j1_lbl_golpes.append(lbl)
 
-        self.btn_sel_arte_p1 = tk.Button(self.frame_p1, text="Seleccionar arte marcial",
-                                         command=self.fijar_arte_p1, bg="#d2b48c")
+        self.btn_sel_arte_p1 = tk.Button(
+            self.frame_p1,
+            text="Seleccionar arte marcial",
+            command=self.fijar_arte_p1,
+            bg="#d2b48c",
+        )
         self.btn_sel_arte_p1.grid(row=3, column=0, columnspan=3, pady=5)
 
-        self.btn_combo_p1 = tk.Button(self.frame_p1, text="Generar combo",
-                                      command=self.generar_combo_p1, bg="#f0a500")
+        self.btn_combo_p1 = tk.Button(
+            self.frame_p1,
+            text="Generar combo",
+            command=self.generar_combo_p1,
+            bg="#f0a500",
+        )
         self.btn_combo_p1.grid(row=4, column=0, columnspan=3, pady=5)
 
-        self.btn_atacar_p1 = tk.Button(self.frame_p1, text="Atacar",
-                                       command=self.atacar_p1, bg="#e25822", fg="white")
+        self.btn_atacar_p1 = tk.Button(
+            self.frame_p1,
+            text="Atacar",
+            command=self.atacar_p1,
+            bg="#e25822",
+            fg="white",
+        )
         self.btn_atacar_p1.grid(row=5, column=0, columnspan=3, pady=5)
 
         self.txt_log_p1 = tk.Text(self.frame_p1, height=4, width=38)
         self.txt_log_p1.grid(row=6, column=0, columnspan=3)
 
-        # ---------------- PLAYER 2 ----------------
-        tk.Label(self.frame_p2, text="Player 2", font=("Arial", 14, "bold")).grid(row=0, column=0, columnspan=3)
+        # Imagen del arte seleccionado P1
+        self.lbl_img_p1 = tk.Label(self.frame_p1, text="(sin imagen)")
+        self.lbl_img_p1.grid(row=7, column=0, columnspan=3, pady=5)
+
+        # =====================================================
+        # PLAYER 2
+        # =====================================================
+        tk.Label(self.frame_p2, text="Player 2", font=("Arial", 14, "bold")).grid(
+            row=0, column=0, columnspan=3
+        )
 
         self.j2_btn_artes = []
         self.j2_lbl_golpes = []
 
         for i in range(3):
-            btn = tk.Button(self.frame_p2, text="", width=12,
-                            command=lambda idx=i: self.seleccionar_arte_p2(idx),
-                            bg="#b33", fg="white")
+            btn = tk.Button(
+                self.frame_p2,
+                text="",
+                width=12,
+                command=lambda idx=i: self.seleccionar_arte_p2(idx),
+                bg="#b33",
+                fg="white",
+            )
             btn.grid(row=1, column=i, padx=5, pady=5)
             self.j2_btn_artes.append(btn)
 
@@ -167,23 +208,44 @@ class JuegoGUI:
             lbl.grid(row=2, column=i)
             self.j2_lbl_golpes.append(lbl)
 
-        self.btn_sel_arte_p2 = tk.Button(self.frame_p2, text="Seleccionar arte marcial (P2)",
-                                         command=self.fijar_arte_p2, bg="#d2b48c")
+        self.btn_sel_arte_p2 = tk.Button(
+            self.frame_p2,
+            text="Seleccionar arte marcial (P2)",
+            command=self.fijar_arte_p2,
+            bg="#d2b48c",
+        )
         self.btn_sel_arte_p2.grid(row=3, column=0, columnspan=3, pady=5)
 
-        self.btn_combo_p2 = tk.Button(self.frame_p2, text="Generar combo",
-                                      command=self.generar_combo_p2, bg="#f0a500")
+        self.btn_combo_p2 = tk.Button(
+            self.frame_p2,
+            text="Generar combo",
+            command=self.generar_combo_p2,
+            bg="#f0a500",
+        )
         self.btn_combo_p2.grid(row=4, column=0, columnspan=3, pady=5)
 
-        self.btn_atacar_p2 = tk.Button(self.frame_p2, text="Atacar",
-                                       command=self.atacar_p2, bg="#e25822", fg="white")
+        self.btn_atacar_p2 = tk.Button(
+            self.frame_p2,
+            text="Atacar",
+            command=self.atacar_p2,
+            bg="#e25822",
+            fg="white",
+        )
         self.btn_atacar_p2.grid(row=5, column=0, columnspan=3, pady=5)
 
         self.txt_log_p2 = tk.Text(self.frame_p2, height=4, width=38)
         self.txt_log_p2.grid(row=6, column=0, columnspan=3)
 
-        # ---------------- CENTRO ----------------
-        tk.Label(self.frame_centro, text="VIDAS", font=("Arial", 13, "bold")).grid(row=0, column=0, pady=5)
+        # Imagen del arte seleccionado P2
+        self.lbl_img_p2 = tk.Label(self.frame_p2, text="(sin imagen)")
+        self.lbl_img_p2.grid(row=7, column=0, columnspan=3, pady=5)
+
+        # =====================================================
+        # CENTRO
+        # =====================================================
+        tk.Label(self.frame_centro, text="VIDAS", font=("Arial", 13, "bold")).grid(
+            row=0, column=0, pady=5
+        )
 
         self.lbl_vida_j1 = tk.Label(self.frame_centro, text="")
         self.lbl_vida_j1.grid(row=1, column=0, pady=5)
@@ -191,17 +253,146 @@ class JuegoGUI:
         self.lbl_vida_j2 = tk.Label(self.frame_centro, text="")
         self.lbl_vida_j2.grid(row=2, column=0, pady=5)
 
-        tk.Label(self.frame_centro, text="Bitácora:", font=("Arial", 12)).grid(row=3, column=0, pady=10)
+        # Botones para reasignar estrategias
+        self.btn_reasignar_j1 = tk.Button(
+            self.frame_centro,
+            text="Reasignar artes J1",
+            command=self.reasignar_j1,
+            bg="#c09060",
+        )
+        self.btn_reasignar_j1.grid(row=3, column=0, pady=5)
 
-        # Bitácora compacta
-        self.txt_bitacora = tk.Text(self.frame_centro, height=12, width=45)
-        self.txt_bitacora.grid(row=4, column=0)
+        self.btn_reasignar_j2 = tk.Button(
+            self.frame_centro,
+            text="Reasignar artes J2",
+            command=self.reasignar_j2,
+            bg="#c09060",
+        )
+        self.btn_reasignar_j2.grid(row=4, column=0, pady=5)
 
-        self.lbl_especial = tk.Label(self.frame_centro, text="Última habilidad: (ninguna)")
-        self.lbl_especial.grid(row=5, column=0, pady=10)
+        # Botón para ver bitácora
+        self.btn_ver_bitacora = tk.Button(
+            self.frame_centro,
+            text="Ver bitácora completa",
+            command=self.mostrar_bitacora,
+            bg="#d2b48c",
+        )
+        self.btn_ver_bitacora.grid(row=5, column=0, pady=10)
+
+        self.lbl_especial = tk.Label(
+            self.frame_centro, text="Última habilidad: (ninguna)"
+        )
+        self.lbl_especial.grid(row=6, column=0, pady=10)
 
     # ============================================================
-    # REFRESCAR UI
+    # CARGA DE IMÁGENES (REDIMENSIONADAS)
+    # ============================================================
+    def cargar_imagenes_artes(self):
+        """
+        Carga una imagen por cada arte disponible.
+        Nombre de archivo esperado: img/<nombre_arte_normalizado>.png
+        Ej: 'Kung Fu' -> 'img/kung_fu.png'
+        Se redimensionan usando subsample para que no sean muy grandes.
+        """
+        self.imagenes_artes = {}
+        base_dir = os.path.dirname(__file__)
+        img_dir = os.path.join(base_dir, "img")
+
+        MAX_W = 200
+        MAX_H = 200
+
+        for arte in self.artes_disponibles:
+            nombre = arte.nombre           # ej. "Kung Fu"
+            slug = nombre.lower().replace(" ", "_")  # "kung_fu"
+
+            img = None
+            for ext in (".png", ".gif"):
+                ruta = os.path.join(img_dir, slug + ext)
+                if os.path.exists(ruta):
+                    try:
+                        original = tk.PhotoImage(file=ruta)
+                        w, h = original.width(), original.height()
+
+                        factor_w = max(1, int(w / MAX_W)) if w > MAX_W else 1
+                        factor_h = max(1, int(h / MAX_H)) if h > MAX_H else 1
+                        factor = max(factor_w, factor_h)
+
+                        if factor > 1:
+                            img = original.subsample(factor, factor)
+                        else:
+                            img = original
+                    except tk.TclError:
+                        img = None
+                    break
+
+            self.imagenes_artes[nombre] = img
+
+    # ============================================================
+    # BITÁCORA: almacenamiento y ventana
+    # ============================================================
+    def log_bitacora(self, mensaje: str):
+        """Guarda el mensaje en memoria y, si la ventana está abierta, lo escribe en el Text."""
+        self.historial_bitacora.append(mensaje)
+        if self.txt_bitacora is not None:
+            self.txt_bitacora.insert(tk.END, mensaje)
+            self.txt_bitacora.see(tk.END)
+
+    def mostrar_bitacora(self):
+        """Abre (o trae al frente) una ventana con la bitácora completa."""
+        if self.bitacora_window is not None and self.bitacora_window.winfo_exists():
+            self.bitacora_window.deiconify()
+            self.bitacora_window.lift()
+            return
+
+        self.bitacora_window = tk.Toplevel(self.root)
+        self.bitacora_window.title("Bitácora de combate")
+
+        self.txt_bitacora = tk.Text(self.bitacora_window, height=20, width=60)
+        self.txt_bitacora.pack(fill="both", expand=True)
+
+        for linea in self.historial_bitacora:
+            self.txt_bitacora.insert(tk.END, linea)
+        self.txt_bitacora.see(tk.END)
+
+        def on_close():
+            self.txt_bitacora = None
+            self.bitacora_window.destroy()
+
+        self.bitacora_window.protocol("WM_DELETE_WINDOW", on_close)
+
+    # ============================================================
+    # REFRESCAR IMAGEN SEGÚN ARTE SELECCIONADO
+    # ============================================================
+    def actualizar_imagen_p1(self):
+        try:
+            arte = self.j1.artes_marciales[self.j1_arte_sel]
+            img = self.imagenes_artes.get(arte.nombre)
+        except Exception:
+            return
+
+        if img:
+            self.lbl_img_p1.config(image=img, text="")
+            self.lbl_img_p1.image = img
+        else:
+            self.lbl_img_p1.config(text=arte.nombre, image="")
+            self.lbl_img_p1.image = None
+
+    def actualizar_imagen_p2(self):
+        try:
+            arte = self.j2.artes_marciales[self.j2_arte_sel]
+            img = self.imagenes_artes.get(arte.nombre)
+        except Exception:
+            return
+
+        if img:
+            self.lbl_img_p2.config(image=img, text="")
+            self.lbl_img_p2.image = img
+        else:
+            self.lbl_img_p2.config(text=arte.nombre, image="")
+            self.lbl_img_p2.image = None
+
+    # ============================================================
+    # REFRESCAR DATOS
     # ============================================================
     def refrescar_artes_ui(self):
         for i, arte in enumerate(self.j1.artes_marciales):
@@ -217,38 +408,50 @@ class JuegoGUI:
         self.lbl_vida_j2.config(text=self.j2.resumen_vida())
 
     # ============================================================
-    # SELECCIÓN DE ARTE
+    # REASIGNAR ESTRATEGIAS
+    # ============================================================
+    def reasignar_j1(self):
+        self.seleccionar_artes_para_jugador(self.j1, "Reasignar artes Player 1")
+        self.j1_arte_sel = 0
+        self.j1_combo_pendiente = None
+        self.estado_j1 = "esperando_seleccion"
+        self.refrescar_artes_ui()
+        self.seleccionar_arte_p1(0)
+        self.actualizar_controles()
+
+    def reasignar_j2(self):
+        self.seleccionar_artes_para_jugador(self.j2, "Reasignar artes Player 2")
+        self.j2_arte_sel = 0
+        self.j2_combo_pendiente = None
+        self.estado_j2 = "esperando_seleccion"
+        self.refrescar_artes_ui()
+        self.seleccionar_arte_p2(0)
+        self.actualizar_controles()
+
+    # ============================================================
+    # SELECCIÓN Y FIJACIÓN DE ARTE
     # ============================================================
     def seleccionar_arte_p1(self, idx):
         self.j1_arte_sel = idx
-        for i, b in enumerate(self.j1_btn_artes):
-            b.config(relief="sunken" if i == idx else "raised")
+        for i, btn in enumerate(self.j1_btn_artes):
+            btn.config(relief="sunken" if i == idx else "raised")
+        self.actualizar_imagen_p1()
 
     def seleccionar_arte_p2(self, idx):
         self.j2_arte_sel = idx
-        for i, b in enumerate(self.j2_btn_artes):
-            b.config(relief="sunken" if i == idx else "raised")
+        for i, btn in enumerate(self.j2_btn_artes):
+            btn.config(relief="sunken" if i == idx else "raised")
+        self.actualizar_imagen_p2()
 
-    # ============================================================
-    # FIJAR ARTE
-    # ============================================================
     def fijar_arte_p1(self):
-        if self.turno_actual != 1:
-            return
-        if self.estado_j1 != "esperando_seleccion":
-            return
-
-        self.estado_j1 = "arte_fijado"
-        self.actualizar_controles()
+        if self.turno_actual == 1 and self.estado_j1 == "esperando_seleccion":
+            self.estado_j1 = "arte_fijado"
+            self.actualizar_controles()
 
     def fijar_arte_p2(self):
-        if self.turno_actual != 2:
-            return
-        if self.estado_j2 != "esperando_seleccion":
-            return
-
-        self.estado_j2 = "arte_fijado"
-        self.actualizar_controles()
+        if self.turno_actual == 2 and self.estado_j2 == "esperando_seleccion":
+            self.estado_j2 = "arte_fijado"
+            self.actualizar_controles()
 
     # ============================================================
     # GENERAR COMBOS
@@ -257,7 +460,9 @@ class JuegoGUI:
         if self.turno_actual != 1:
             return
         if self.estado_j1 != "arte_fijado":
-            messagebox.showinfo("Error", "Debe fijar el arte antes de generar el combo.")
+            messagebox.showinfo(
+                "Error", "Debe fijar el arte antes de generar el combo."
+            )
             return
 
         arte = self.j1.artes_marciales[self.j1_arte_sel]
@@ -265,8 +470,7 @@ class JuegoGUI:
         self.estado_j1 = "combo_generado"
 
         nombres = ", ".join(g.nombre for g in self.j1_combo_pendiente)
-        self.txt_bitacora.insert(tk.END, f"P1 genera combo: {nombres}\n")
-        self.txt_bitacora.see(tk.END)
+        self.log_bitacora(f"P1 genera combo: {nombres}\n")
 
         self.actualizar_controles()
 
@@ -274,7 +478,9 @@ class JuegoGUI:
         if self.turno_actual != 2:
             return
         if self.estado_j2 != "arte_fijado":
-            messagebox.showinfo("Error", "Debe fijar el arte antes de generar el combo.")
+            messagebox.showinfo(
+                "Error", "Debe fijar el arte antes de generar el combo."
+            )
             return
 
         arte = self.j2.artes_marciales[self.j2_arte_sel]
@@ -282,8 +488,7 @@ class JuegoGUI:
         self.estado_j2 = "combo_generado"
 
         nombres = ", ".join(g.nombre for g in self.j2_combo_pendiente)
-        self.txt_bitacora.insert(tk.END, f"P2 genera combo: {nombres}\n")
-        self.txt_bitacora.see(tk.END)
+        self.log_bitacora(f"P2 genera combo: {nombres}\n")
 
         self.actualizar_controles()
 
@@ -291,24 +496,29 @@ class JuegoGUI:
     # ATAQUES
     # ============================================================
     def atacar_p1(self):
-        if self.turno_actual != 1:
-            return
-        if self.estado_j1 != "combo_generado":
-            messagebox.showinfo("Error", "Debe generar un combo antes de atacar.")
+        if self.turno_actual != 1 or self.estado_j1 != "combo_generado":
             return
 
         arte = self.j1.artes_marciales[self.j1_arte_sel]
-        dmg, c, nombres, esp = self.aplicar_combo(self.j1, self.j2, self.j1_combo_pendiente)
+        dmg, cur, nombres, esp = self.aplicar_combo(
+            self.j1, self.j2, self.j1_combo_pendiente
+        )
 
         self.j1_contador_combos += 1
-        linea = f"P1 ataca con {arte.nombre} ({', '.join(nombres)}) → daño {dmg}, cura {c}\n"
-
+        linea = (
+            f"P1 ataca con {arte.nombre} ({', '.join(nombres)}) "
+            f"→ daño {dmg}, cura {cur}\n"
+        )
         self.txt_log_p1.insert(tk.END, linea)
-        self.txt_bitacora.insert(tk.END, linea)
-        self.txt_bitacora.see(tk.END)
+        self.log_bitacora(linea)
 
         if esp:
-            self.lbl_especial.config(text=f"Última habilidad: {esp.nombre} (+{esp.cura_usuario} vida, +{esp.damage_extra_enemigo} daño extra)")
+            self.lbl_especial.config(
+                text=(
+                    f"Última habilidad: {esp.nombre} "
+                    f"(+{esp.cura_usuario} vida, +{esp.damage_extra_enemigo} daño extra)"
+                )
+            )
 
         self.j1_combo_pendiente = None
         self.estado_j1 = "esperando_seleccion"
@@ -319,24 +529,29 @@ class JuegoGUI:
         self.actualizar_controles()
 
     def atacar_p2(self):
-        if self.turno_actual != 2:
-            return
-        if self.estado_j2 != "combo_generado":
-            messagebox.showinfo("Error", "Debe generar un combo antes de atacar.")
+        if self.turno_actual != 2 or self.estado_j2 != "combo_generado":
             return
 
         arte = self.j2.artes_marciales[self.j2_arte_sel]
-        dmg, c, nombres, esp = self.aplicar_combo(self.j2, self.j1, self.j2_combo_pendiente)
+        dmg, cur, nombres, esp = self.aplicar_combo(
+            self.j2, self.j1, self.j2_combo_pendiente
+        )
 
         self.j2_contador_combos += 1
-        linea = f"P2 ataca con {arte.nombre} ({', '.join(nombres)}) → daño {dmg}, cura {c}\n"
-
+        linea = (
+            f"P2 ataca con {arte.nombre} ({', '.join(nombres)}) "
+            f"→ daño {dmg}, cura {cur}\n"
+        )
         self.txt_log_p2.insert(tk.END, linea)
-        self.txt_bitacora.insert(tk.END, linea)
-        self.txt_bitacora.see(tk.END)
+        self.log_bitacora(linea)
 
         if esp:
-            self.lbl_especial.config(text=f"Última habilidad: {esp.nombre} (+{esp.cura_usuario} vida, +{esp.damage_extra_enemigo} daño extra)")
+            self.lbl_especial.config(
+                text=(
+                    f"Última habilidad: {esp.nombre} "
+                    f"(+{esp.cura_usuario} vida, +{esp.damage_extra_enemigo} daño extra)"
+                )
+            )
 
         self.j2_combo_pendiente = None
         self.estado_j2 = "esperando_seleccion"
@@ -350,53 +565,97 @@ class JuegoGUI:
     # CONTROL DE BOTONES
     # ============================================================
     def actualizar_controles(self):
-        # ---------- PLAYER 1 ----------
         if self.turno_actual == 1:
+            # Player 1 habilitado
             for b in self.j1_btn_artes:
-                b.config(state="normal" if self.estado_j1 == "esperando_seleccion" else "disabled")
+                b.config(
+                    state=(
+                        "normal"
+                        if self.estado_j1 == "esperando_seleccion"
+                        else "disabled"
+                    )
+                )
+            self.btn_sel_arte_p1.config(
+                state=(
+                    "normal"
+                    if self.estado_j1 == "esperando_seleccion"
+                    else "disabled"
+                )
+            )
+            self.btn_combo_p1.config(
+                state="normal" if self.estado_j1 == "arte_fijado" else "disabled"
+            )
+            self.btn_atacar_p1.config(
+                state="normal" if self.estado_j1 == "combo_generado" else "disabled"
+            )
 
-            self.btn_sel_arte_p1.config(state="normal" if self.estado_j1 == "esperando_seleccion" else "disabled")
-            self.btn_combo_p1.config(state="normal" if self.estado_j1 == "arte_fijado" else "disabled")
-            self.btn_atacar_p1.config(state="normal" if self.estado_j1 == "combo_generado" else "disabled")
-
-            # P2 deshabilitado
+            # Player 2 deshabilitado
             for b in self.j2_btn_artes:
                 b.config(state="disabled")
             self.btn_sel_arte_p2.config(state="disabled")
             self.btn_combo_p2.config(state="disabled")
             self.btn_atacar_p2.config(state="disabled")
 
-        # ---------- PLAYER 2 ----------
         else:
+            # Player 2 habilitado
             for b in self.j2_btn_artes:
-                b.config(state="normal" if self.estado_j2 == "esperando_seleccion" else "disabled")
+                b.config(
+                    state=(
+                        "normal"
+                        if self.estado_j2 == "esperando_seleccion"
+                        else "disabled"
+                    )
+                )
+            self.btn_sel_arte_p2.config(
+                state=(
+                    "normal"
+                    if self.estado_j2 == "esperando_seleccion"
+                    else "disabled"
+                )
+            )
+            self.btn_combo_p2.config(
+                state="normal" if self.estado_j2 == "arte_fijado" else "disabled"
+            )
+            self.btn_atacar_p2.config(
+                state="normal" if self.estado_j2 == "combo_generado" else "disabled"
+            )
 
-            self.btn_sel_arte_p2.config(state="normal" if self.estado_j2 == "esperando_seleccion" else "disabled")
-            self.btn_combo_p2.config(state="normal" if self.estado_j2 == "arte_fijado" else "disabled")
-            self.btn_atacar_p2.config(state="normal" if self.estado_j2 == "combo_generado" else "disabled")
-
-            # P1 deshabilitado
+            # Player 1 deshabilitado
             for b in self.j1_btn_artes:
                 b.config(state="disabled")
             self.btn_sel_arte_p1.config(state="disabled")
             self.btn_combo_p1.config(state="disabled")
             self.btn_atacar_p1.config(state="disabled")
 
+        # Botones de reasignar y ver bitácora siempre habilitados
+        # (si quieres, los podríamos deshabilitar al final del juego en verificar_fin)
+
     # ============================================================
     # FIN DEL JUEGO
     # ============================================================
     def verificar_fin(self):
         if not self.j1.esta_vivo() or not self.j2.esta_vivo():
-            ganador = (
-                self.j1.nombre if self.j1.esta_vivo() else
-                self.j2.nombre if self.j2.esta_vivo() else
-                "Empate"
-            )
+            if self.j1.esta_vivo():
+                ganador = self.j1.nombre
+            elif self.j2.esta_vivo():
+                ganador = self.j2.nombre
+            else:
+                ganador = "Empate"
+
             messagebox.showinfo("Fin del juego", f"Ganador: {ganador}")
+
+            # Deshabilitar acciones de combate
             self.btn_atacar_p1.config(state="disabled")
             self.btn_atacar_p2.config(state="disabled")
             self.btn_combo_p1.config(state="disabled")
             self.btn_combo_p2.config(state="disabled")
+            self.btn_sel_arte_p1.config(state="disabled")
+            self.btn_sel_arte_p2.config(state="disabled")
+            for b in self.j1_btn_artes + self.j2_btn_artes:
+                b.config(state="disabled")
+            # Si quieres también:
+            # self.btn_reasignar_j1.config(state="disabled")
+            # self.btn_reasignar_j2.config(state="disabled")
 
 
 if __name__ == "__main__":
