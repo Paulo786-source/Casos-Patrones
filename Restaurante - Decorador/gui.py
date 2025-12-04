@@ -59,7 +59,7 @@ class SandwichGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Restaurante - Sandwichería (Patrón Decorator)")
-        self.root.geometry("820x650")
+        self.root.geometry("820x900")
 
         # La orden completa
         self.orden = Orden()
